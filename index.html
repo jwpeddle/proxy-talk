@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html ng-app="vmfarms">
   <head>
-    <title>React.js</title>
+    <title>Django Model Proxy</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
     <style type="text/css">
       @import url(http://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
@@ -50,11 +50,15 @@
         text-align: center;
       }
       li {
+        margin-bottom: 1em;
         text-align: left;
       }
-      .remark-code, .remark-inline-code {
+      .remark-code {
         font-family: 'Ubuntu Mono';
         font-size: 20px;
+      }
+      .remark-inline-code {
+        font-family: 'Ubuntu Mono';
       }
       .remark-code-line-highlighted {
         background-color: #222;
@@ -73,198 +77,231 @@
     <textarea id="source">
 
 class: center, middle
+#A Tale of Two Trees
+####Serializing a Django tree
+Jason Peddle <span style="color: #daa420;">@jwpeddle</span>
 
-#React.js
-####Yet <em>another</em> another javascript framework
-???
-React.js, yet <em>another</em> another javascript framework
-
----
-class: middle
-##A javascript library for building user interfaces
-* Just the UI (the V in MVC)
-* Virtual DOM
-* Components
-* One-way data flow
-* JSX - XML in your Javascript
-???
-What is React?
-A javascript library for building user interfaces, by Facebook.
-
-It's just the UI (the view in model view controller) - it makes no assumptions about the rest of your stack.
-
-Components. UI and functionality is grouped into class-like objects for organization.
-
-Virtual DOM. React maintains its own in-memory representation of the browser DOM.
-
-One-way data flow. Parent components handle state changes and propagate to child components.
-
-JSX - XML in your Javascript. Don't cringe just yet.
+<img src="me.png" style="width: 100px; margin-right: 50px; vertical-align: top;">
+<img src="logo.png" style="width: 300px">
 
 ---
-class: middle
+#Problem
+* How do I freeze in time a hierarchy of Django models?
+* How can I turn those frozen models back into real models?
+* How can I use those frozen models in code that expects real models?
+???
+NOTES
 
-#Hello World
+---
+#My Model Hierarchy
 
-```html
-<div id="example"></div>
+```python
+class Server(models.Model):
+    hostname = models.CharField(max_length=50)
 
-<script>
-  var React = require('react');
-  var ReactDOM = require('react-dom');
 
-  ReactDOM.render(
-    <h1>Hello, world!</h1>,
-    document.getElementById('example')
-  );
-</script>
+class User(models.Model):
+    name = models.CharField(max_length=50)
+    groups = models.ManyToManyField(Server)
+
+
+class SSHKey(models.Model):
+    key = models.TextField()
+    user = models.ForeignKey(User)
 ```
 ???
-Here's a hello world example. A few things of note here:
+NOTES
 
-React uses CommonJS for modules, which is pretty much the standard nowadays. That's the require() calls there.
-
-There's HTML right inside the javascript, as you can see with the h1.
-
-We call render on the ReactDOM, passing markup and an element on the page for it to render inside of. This looks like template rendering in any framework.
-
-Let's look at a slightly more complex version of this.
 ---
 class: middle
+#My Production Server
 
-#Hello World with State
-```html
-<div id="example"></div>
+```python
+production = Server.objects.create(hostname='production')
 
-<script>
-  var Hello = React.createClass({
-    render: function() {
-      return <div>Hello {this.props.name}</div>;
-    }
-  });
-   
-  ReactDOM.render(
-    <Hello name="World" />,
-    document.getElementById('example')
-  );
-</script>
+jason = production.user_set.create(name='jason')
+
+ssh_key = jason.sshkey_set.create(key='totally real ssh key')
+```
+![tree](tree.png)
+???
+NOTES
+
+---
+#Freeze!
+###Enter django-reversion
+
+```python
+reversion.register(Server, follow=['user_set'])
+reversion.register(User, follow=['sshkey_set'])
+reversion.register(SSHKey)
+
+frozen_state = revision_manager.save_revision([production])
+
+print revision.version_set.all()
+  [
+      <Version: SSHKey:totally real ssh key>,
+      <Version: User:jason>,
+      <Version: Server:production>,
+  ]
 ```
 ???
-In this example, we first create a React component named Hello, which has a render function that returns not just
-HTML, but HTML with a variable in it.
-
-In the call to ReactDOM.render, you can see we're still passing what looks like HTML, but it's in fact our component. We even set the 'name' property using HTML attributes.
-
-Now that we know what it looks like, let's talk about the features and philosophy.
+NOTES
 
 ---
-class: middle
-#Just the UI
-* Drop in framework
-* Unopinionated*
-* Architect from design
+# Serialized to dict
+```python
+print frozen_server.field_dict
+  {
+      'id': 1
+      'hostname': u'production',
+  }
 
-*Flux, GraphSQL, Relay
+print frozen_user.field_dict
+  {
+      'id': 1,
+      'groups': [u'1'],
+      'name': u'jason',
+  }
 
-???
-Because React.js is only concerned with UI, it works very well as a drop in framework.
-You can compose it with other javascript frameworks, like Backbone for state management. You can also use it alone as a simple enhancement layer.
-
-Unopinionated, which could be considered a pro or con. It's a pro in that you don't need to fully immerse yourself in React to use it. You can do things "wrong" and still get a working application. It's a con in that React may not have the answers to all your questions. Fortunately, Facebook has other technologies and guidelines that fill in some of these opinions, mainly Flux, Relay, and GraphQL, which I'm not going to get into today.
-
-Finally, because React is UI only, you can loosely architect it around the design. To illustrate this, take a look at this example.
-
----
-class: middle
-#Mockups -> Components
-![mockup](https://facebook.github.io/react/img/blog/thinking-in-react-mock.png) ![mockup2](https://facebook.github.io/react/img/blog/thinking-in-react-components.png)
-
-https://jsfiddle.net/reactjs/yun1vgqb/light/
-???
-Let's say you're handed the mockup on the left. By simply drawing boxes around the pieces that relate to each other, you know exactly how many React components you need to build it. In this case, one to represent the search box, one to represent each line item, one to represent to headers, one for the list itself, and one to group everything together.
-
-That's too much code for a slide, but you can check it out on jsfiddle if you want.
-
----
-class: middle
-#Virtual DOM
-* In memory
-* Very fast to apply changes to the real DOM
-* Can be rendered server side.
-* Can be applied to things other than the browser DOM - React Native
-
-???
-Virtual DOM is one of the major features of React, because it makes it faster than basically every other javascript framework.
-
-Because the Browser DOM is very slow, React maintains its own version of the DOM. When you make changes to your state, the React DOM updates by rerendering every component, then diffing them to figure out what needs to change in the real DOM, then injecting the patch.
-
-For SEO, React components can prerender using Node to serve up static pages.
-
-Finally, React maintaining a virtual DOM means the translation layer doesn't have to only apply to browser DOMs. Facebook has released React Native, which allows you to write React components for Android and iOS Native apps.
-
----
-class: middle
-#One-way data flow
-* You explicitly trigger events that change state.
-* Parent component will rerender all children in response to state change.
-* Easy to debug events and state changes.
-
-???
-Unlike, say, Angular, React data flows in one direction. This means that nothing rerenders magically. You always know exactly when you're triggering a rerender, and where it happens. React involves a little more writing, but it gives you much more explicit places to step through when things go wrong.
-
----
-class: middle
-
-#JSX
-* Allows organization tree-like data using a familiar syntax.
-* Leverages normal javascript for logic.
-* Optional, simply syntactic sugar on top of javascript.
-
+print frozen_key.field_dict
+  {
+      'id': 1,
+      'key': u'totally real ssh key',
+      'user': 1,
+  }
 ```
-// Input (JSX):
-var app = <Nav color="blue" />;
-
-// Output (JS):
-var app = React.createElement(Nav, {color: 'blue'});
-```
-
 ???
-JSX is one thing about React that causes people to do a double take, since putting XML inside javascript sounds awful and a terrible separation of concerns. In practice, however, it is basically impossible to separate HTML and Javascript cleanly. There's always fragile glue between the two and it's unclear where you're meant to cut.
-
-JSX acknowleges that HTML simply represents your data hierarchy, and provides a friendly familiar syntax to organize it. You can even ditch it completely for vanilla javascript, but most people end up preferring JSX.
+NOTES
 
 ---
-#JSX is just Javascript
+class: middle
+##Also provides a real model instance
+```python
+print frozen_server.object_version.object
+  Server:production
 
-####Example of a normal if/else being used as a conditional: 
-```
-var loginButton;
-if (loggedIn) {
-  loginButton = <LogoutButton />;
-} else {
-  loginButton = <LoginButton />;
-}
-
-return (
-  <nav>
-    <Home />
-    {loginButton}
-  </nav>
-);
+print frozen_server.object_version.object.hostname
+  u'production'
 ```
 
 ---
-#Who's using it?
-* Instagram/Facebook/WhatsApp (obviously)
-* Yahoo Mail
-* Netflix
-* Hipchat
-* Many, many more https://github.com/facebook/react/wiki/Sites-Using-React
+# Let's make a change!
+```python
+server.hostname = 'production-01'
+server.save()
+
+print frozen_server.object_version.object.hostname
+  u'production'
+```
+##Woohoo! Problem solved?
+#####... no :(
 
 ---
-#Questions?
+# Let's make a another change!
+```python
+server.user_set.create(name='hany')
+```
 
-![confused](http://media3.giphy.com/media/Qy9hRuWrKjY2I/giphy.gif)
+![tree2](tree2.png)
+
+---
+#Check back on our frozen server
+```python
+print frozen_server.object_version.object.user_set.all()
+  [<User: User:jason>, <User: User:hany>]
+```
+##W... what?
+###Why is my new user accessible on the frozen server?
+
+---
+#Enter: glue code (VersionProxy)
+```python
+class VersionProxy(object):
+    """ Really good docstring """
+    def __init__(self, version):
+        self._version = version
+        self._object = version.object_version.object
+
+    def __getattr__(self, name):
+        """ omg """
+        # MAGIC
+```
+
+---
+#getattr to the rescue, round 1
+###If it's a simple field (char, int)
+* Just return the frozen field
+
+###If it's a class method/other attribute
+* Just return the method from real model
+
+---
+#getattr to the rescue, round 1
+###If it's a foreign key
+* Find out what model it connects to (from the Model._meta API)
+* Look in the revision for a version of that model
+* Wrap in its own VersionProxy and return
+
+---
+#getattr to the rescue, round 1
+###If it's an M2M
+* Same process as foreign key, but with worse _meta APIs
+
+###If it's a reverse FK/M2M?
+* Agghhhh. Be grateful for the _meta API refactor in Django 1.8
+
+---
+#Problem: What about instance methods?
+
+```python
+def __getattr__(self, name):
+    def _method_proxy(*args, **kwargs):
+        unbound_method = getattr(self._object._meta.model, name)
+        return unbound_method.im_func(self, *args, **kwargs)
+```
+###TL;DR: Hijack self, stuff in my fake object.
+
+---
+#Problem: What about comparisons?
+
+```python
+def __eq__(self, other):
+    return self._object == other
+
+def __ne__(self, other):
+    return not self.__eq__(other)
+```
+###Compare to internal "real" object instead*
+#####* Only works if my proxy is on the left side of comparison :(
+
+---
+#Problem: What if I missed something?
+```python
+self._object._state.db = 'DISCONNECTED'
+```
+###Unplug the reference to the database and just wait for things to explode
+
+---
+#Problem: What if I use the VersionProxy as a dictionary key?
+```python
+def __hash__(self):
+    return hash(self._object)
+```
+###Use "real" object hash instead
+
+---
+#Problem: Everything else
+* Repeat for `__repr__`, `__unicode__`, everything else that exposes the imposter
+* Fire fake objects through test suite over and over until abstraction stops leaking
+
+---
+class: center, middle
+#Questions, comments, smarmy comments, nitpicks?
+Jason Peddle <span style="color: #daa420;">@jwpeddle</span>
+
+<img src="me.png" style="width: 100px; margin-right: 50px; vertical-align: top;">
+<img src="logo.png" style="width: 300px">
 
 
     </textarea>
